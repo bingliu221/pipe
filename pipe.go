@@ -21,10 +21,11 @@ func Start(f func() interface{}, parent context.Context) Pipe {
 
 	go func() {
 		defer cancel()
+		defer close(currentChan)
+
 		for {
 			select {
 			case <-parent.Done():
-				close(currentChan)
 				return
 			default:
 				out := f()
@@ -48,15 +49,18 @@ func (p Pipe) Then(f func(interface{}) interface{}) Pipe {
 
 	go func() {
 		defer cancel()
+		defer close(currentChan)
+
 		for {
 			select {
 			case <-lastCtx.Done():
-				close(currentChan)
 				return
 			case in, ok := <-frontChan:
 				if ok {
 					out := f(in)
 					currentChan <- out
+				} else {
+					return
 				}
 			}
 		}
@@ -77,11 +81,12 @@ func (p Pipe) End(f func(interface{})) Pipe {
 		for {
 			select {
 			case <-lastCtx.Done():
-				cancel()
 				return
 			case in, ok := <-frontChan:
 				if ok {
 					f(in)
+				} else {
+					return
 				}
 			}
 		}

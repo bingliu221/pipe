@@ -2,20 +2,21 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/bingliu221/pipe"
 )
 
-func gen(cancel context.CancelFunc) func() interface{} {
+func gen(cancel []context.CancelFunc) func() interface{} {
 	value := 0
 
 	return func() interface{} {
 		value++
 		if value >= 10 {
-			cancel()
+			(cancel[0])()
 		}
 		return value
 	}
@@ -35,18 +36,24 @@ func multiply(n int) func(interface{}) interface{} {
 
 func print() func(interface{}) {
 	return func(x interface{}) {
-		fmt.Println(x.(int))
+		log.Println(x.(int))
 	}
 }
 
 func main() {
 
-	mainCtx, cancel := context.WithCancel(context.Background())
+	cancel := make([]context.CancelFunc, 1)
 
-	p := pipe.Start(gen(cancel), mainCtx).Then(add(2)).Then(multiply(2)).End(print())
+	p := pipe.Start(gen(cancel)).Then(add(2)).Then(multiply(2)).End(print())
+	cancel[0] = p.Cancel
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt)
+
+	t := time.NewTimer(time.Second / 3)
+	defer t.Stop()
+
+ForLoop:
 	for {
 		select {
 		case sig := <-signalChan:
@@ -54,7 +61,9 @@ func main() {
 				p.Cancel()
 			}
 		case <-p.Done():
-			return
+			break ForLoop
+		case <-t.C:
+			p.Cancel()
 		}
 	}
 }

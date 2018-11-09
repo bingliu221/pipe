@@ -3,27 +3,28 @@ package pipe
 import "context"
 
 type Pipe struct {
-	Ctx      context.Context
+	ctx      context.Context
 	lastChan chan interface{}
 
 	Cancel context.CancelFunc
 }
 
-func Start(f func() interface{}) Pipe {
+func Start(f func() interface{}, parent context.Context) Pipe {
 	p := Pipe{}
-	startCtx, cancel := context.WithCancel(context.Background())
-	p.Cancel = cancel
+	if parent == nil {
+		parent = context.Background()
+	}
 
 	currentCtx, cancel := context.WithCancel(context.Background())
 
 	currentChan := make(chan interface{})
 
 	go func() {
+		defer cancel()
 		for {
 			select {
-			case <-startCtx.Done():
+			case <-parent.Done():
 				close(currentChan)
-				cancel()
 				return
 			default:
 				out := f()
@@ -32,7 +33,7 @@ func Start(f func() interface{}) Pipe {
 		}
 	}()
 
-	p.Ctx = currentCtx
+	p.ctx = currentCtx
 	p.lastChan = currentChan
 	p.Cancel = cancel
 	return p
@@ -40,48 +41,57 @@ func Start(f func() interface{}) Pipe {
 
 func (p Pipe) Then(f func(interface{}) interface{}) Pipe {
 	currentCtx, cancel := context.WithCancel(context.Background())
-	lastCtx := p.Ctx
+	lastCtx := p.ctx
 	frontChan := p.lastChan
 
 	currentChan := make(chan interface{})
 
 	go func() {
+		defer cancel()
 		for {
 			select {
 			case <-lastCtx.Done():
 				close(currentChan)
-				cancel()
 				return
-			case in := <-frontChan:
-				out := f(in)
-				currentChan <- out
+			case in, ok := <-frontChan:
+				if ok {
+					out := f(in)
+					currentChan <- out
+				}
 			}
 		}
 	}()
 
-	p.Ctx = currentCtx
+	p.ctx = currentCtx
 	p.lastChan = currentChan
 	return p
 }
 
 func (p Pipe) End(f func(interface{})) Pipe {
 	currentCtx, cancel := context.WithCancel(context.Background())
-	lastCtx := p.Ctx
+	lastCtx := p.ctx
 	frontChan := p.lastChan
 
 	go func() {
+		defer cancel()
 		for {
 			select {
 			case <-lastCtx.Done():
 				cancel()
 				return
-			case in := <-frontChan:
-				f(in)
+			case in, ok := <-frontChan:
+				if ok {
+					f(in)
+				}
 			}
 		}
 	}()
 
-	p.Ctx = currentCtx
+	p.ctx = currentCtx
 	p.lastChan = nil
 	return p
+}
+
+func (p Pipe) Done() <-chan struct{} {
+	return p.ctx.Done()
 }
